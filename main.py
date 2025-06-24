@@ -14,9 +14,8 @@ import os
 from typing import Optional, Dict, List, Tuple
 import json
 import math
-from rate_limiter import get_rate_limiter
-import log
-import filehelper
+from dismob.rate_limiter import get_rate_limiter
+from dismob import log, filehelper
 
 async def setup(bot: commands.Bot):
     log.info("Module `levels` setup")
