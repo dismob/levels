@@ -150,7 +150,7 @@ class LevelSystem(commands.Cog):
         """Met à jour l'EXP d'un utilisateur et gère les montées de niveau"""
         if not self.db_ready:
             return 0, 0, 0
-        
+
         try:
             user_data = await self.get_user_data(user.guild.id, user.id)
             old_level = user_data['level']
@@ -170,11 +170,11 @@ class LevelSystem(commands.Cog):
                         (new_exp, new_level, user.guild.id, user.id)
                     )
                 await db.commit()
-            
+
             # Vérifier les récompenses de niveau (seulement si niveau augmenté)
             if new_level != old_level:
                 asyncio.create_task(self.update_rewards(user, new_level))
-            
+
             return old_level, new_level, exp_gain
         except Exception as e:
             log.error(f"Erreur update_user_exp: {e}")
@@ -530,11 +530,11 @@ class LevelSystem(commands.Cog):
         # Vérifier le cooldown
         if user_id in self.message_cooldowns:
             time_diff = (current_time - self.message_cooldowns[user_id]).total_seconds()
-            if time_diff < self.config['message_cooldown']:
+            if time_diff < self.config.get('message_cooldown', 0):
                 return
         
         # Calculer l'EXP avec multiplicateur
-        base_exp = self.config['exp_per_message']
+        base_exp = self.config.get('exp_per_message', 0)
         multiplier = self.get_multiplier(message.author)
         final_exp = int(base_exp * multiplier)
         
@@ -557,7 +557,7 @@ class LevelSystem(commands.Cog):
         for guild in self.bot.guilds:
             log.info(f"Traitement des channels vocaux pour le serveur {guild.name} ({guild.id})")
             # Maybe will have different settings later for each guild
-            base_exp = self.config['exp_per_voice_minute']
+            base_exp: int = self.config.get('exp_per_voice_minute', 0)
             for voice_channel in guild.voice_channels:
                 log.info(f"- Traitement du channel vocal {voice_channel.name} ({voice_channel.id})")
                 if voice_channel.id in blacklisted_channels:
@@ -832,7 +832,7 @@ class LevelSystem(commands.Cog):
             embed.add_field(name="Taille DB", value="`N/A`", inline=True)
         
         # Configuration
-        remove_prev = "✅ Activée" if self.config['remove_previous_rewards'] else "❌ Désactivée"
+        remove_prev = "✅ Activée" if self.config.get('remove_previous_rewards', False) else "❌ Désactivée"
         embed.add_field(name="Suppression Précédentes", value=remove_prev, inline=True)
         
         # Cache
@@ -864,7 +864,7 @@ class LevelSystem(commands.Cog):
                           inline=False)
             
             # Vérifier les rôles actuels
-            user_roles = [role.name for role in utilisateur.roles if role.id in self.config['level_rewards'].values()]
+            user_roles = [role.name for role in utilisateur.roles if role.id in self.config.get('level_rewards', {}).values()]
             embed.add_field(name="Rôles de niveau actuels", 
                           value=", ".join(user_roles) if user_roles else "Aucun", 
                           inline=False)
@@ -1094,13 +1094,15 @@ class LevelSystem(commands.Cog):
             return
         
         # Mettre à jour la récompense de niveau
-        self.config['level_rewards'][str(niveau)] = role.id
+        level_rewards = self.config.get('level_rewards', {})
+        level_rewards[str(niveau)] = role.id
+        self.config['level_rewards'] = level_rewards
         await log.success(interaction, f"Récompense de niveau **{niveau}** définie avec le rôle {role.mention}.")
 
-    @levelRewardsGroup.command(name="remove", description="Supprime la récompense de niveau pour un niveau spécifique")
+    @levelRewardsGroup.command(name="remove", description="Supprime un rôle de récompense de niveau")
     @app_commands.describe(niveau="Le niveau dont supprimer la récompense")
     async def remove_level_reward(self, interaction: discord.Interaction, niveau: int):
-        """Supprime la récompense de niveau pour un niveau spécifique"""
+        """Supprime un rôle de récompense de niveau"""
         if not self.is_admin(interaction.user):
             await log.failure(interaction, "Tu n'as pas la permission d'utiliser cette commande.")
             return
@@ -1312,4 +1314,3 @@ class LevelSystem(commands.Cog):
                 embed.add_field(name=f"ID: `{role_id}`", value="Rôle introuvable", inline=True)
         
         await log.safe_respond(interaction, embed=embed, ephemeral=True)
-    
