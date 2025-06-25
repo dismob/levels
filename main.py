@@ -16,6 +16,7 @@ import json
 import math
 from dismob.rate_limiter import get_rate_limiter
 from dismob import log, filehelper
+from enum import Enum, auto
 
 async def setup(bot: commands.Bot):
     log.info("Module `levels` setup")
@@ -69,6 +70,7 @@ class LevelSystem(commands.Cog):
                         level INTEGER DEFAULT 0,
                         total_messages INTEGER DEFAULT 0,
                         voice_time INTEGER DEFAULT 0,
+                        welcome INTEGER DEFAULT 0,
                         last_message_time TEXT,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -116,12 +118,12 @@ class LevelSystem(commands.Cog):
     async def get_user_data(self, guild_id: int, user_id: int) -> Dict:
         """Récupère les données d'un utilisateur"""
         if not self.db_ready:
-            return {'user_id': user_id, 'exp': 0, 'level': 0, 'total_messages': 0, 'voice_time': 0}
+            return {'user_id': user_id, 'exp': 0, 'level': 0, 'total_messages': 0, 'voice_time': 0, 'welcome': 0}
         
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
-                    "SELECT user_id, exp, level, total_messages, voice_time FROM user_levels WHERE guild_id = ? AND user_id = ?",
+                    "SELECT user_id, exp, level, total_messages, voice_time, welcome FROM user_levels WHERE guild_id = ? AND user_id = ?",
                     (guild_id, user_id,)
                 )
                 result = await cursor.fetchone()
@@ -132,7 +134,8 @@ class LevelSystem(commands.Cog):
                         'exp': result[1],
                         'level': result[2],
                         'total_messages': result[3],
-                        'voice_time': result[4]
+                        'voice_time': result[4],
+                        'welcome': result[5]
                     }
                 else:
                     # Créer un nouvel utilisateur
@@ -141,12 +144,99 @@ class LevelSystem(commands.Cog):
                         (guild_id, user_id,)
                     )
                     await db.commit()
-                    return {'user_id': user_id, 'exp': 0, 'level': 0, 'total_messages': 0, 'voice_time': 0}
+                    return {'user_id': user_id, 'exp': 0, 'level': 0, 'total_messages': 0, 'voice_time': 0, 'welcome': 0}
         except Exception as e:
             print(f"Erreur get_user_data: {e}")
-            return {'user_id': user_id, 'exp': 0, 'level': 0, 'total_messages': 0, 'voice_time': 0}
+            return {'user_id': user_id, 'exp': 0, 'level': 0, 'total_messages': 0, 'voice_time': 0, 'welcome': 0}
 
-    async def update_user_exp(self, user: discord.Member, exp_gain: int, from_voice: bool = False):
+    class ExpGainType(Enum):
+        MESSAGE = auto()
+        VOICE = auto()
+        WELCOME = auto()
+
+        @staticmethod
+        def from_str(label: str):
+            label = label.lower()
+            if label == "message":
+                return LevelSystem.ExpGainType.MESSAGE
+            elif label == "voice":
+                return LevelSystem.ExpGainType.VOICE
+            elif label == "welcome":
+                return LevelSystem.ExpGainType.WELCOME
+            else:
+                raise ValueError(f"Unknown ExpGainType: {label}")
+
+        def __str__(self):
+            return self.name.lower()
+
+        def __repr__(self):
+            return f"ExpGainType.{self.name}"
+
+        def __eq__(self, other):
+            if isinstance(other, LevelSystem.ExpGainType):
+                return self.value == other.value
+            return False
+
+        def __hash__(self):
+            return hash(self.value)
+
+        @classmethod
+        def all(cls):
+            return list(cls)
+
+        @classmethod
+        def choices(cls):
+            return [e.name.lower() for e in cls]
+
+        @classmethod
+        def default(cls):
+            return cls.MESSAGE
+
+        @classmethod
+        def is_valid(cls, value):
+            return value in cls
+
+        @classmethod
+        def from_context(cls, context: str):
+            if context == "voice":
+                return cls.VOICE
+            elif context == "welcome":
+                return cls.WELCOME
+            else:
+                return cls.MESSAGE
+
+        @classmethod
+        def get_update_sql(cls, gain_type):
+            if gain_type == cls.VOICE:
+                return (
+                    "UPDATE user_levels SET exp = ?, level = ?, voice_time = voice_time + 1, updated_at = CURRENT_TIMESTAMP WHERE guild_id = ? AND user_id = ?"
+                )
+            elif gain_type == cls.WELCOME:
+                return (
+                    "UPDATE user_levels SET exp = ?, level = ?, welcome = welcome + 1, updated_at = CURRENT_TIMESTAMP WHERE guild_id = ? AND user_id = ?"
+                )
+            else:
+                return (
+                    "UPDATE user_levels SET exp = ?, level = ?, total_messages = total_messages + 1, last_message_time = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE guild_id = ? AND user_id = ?"
+                )
+
+        @classmethod
+        def get_update_params(cls, gain_type, new_exp, new_level, guild_id, user_id):
+            return (new_exp, new_level, guild_id, user_id)
+
+        @classmethod
+        def is_voice(cls, gain_type):
+            return gain_type == cls.VOICE
+
+        @classmethod
+        def is_welcome(cls, gain_type):
+            return gain_type == cls.WELCOME
+
+        @classmethod
+        def is_message(cls, gain_type):
+            return gain_type == cls.MESSAGE
+
+    async def update_user_exp(self, user: discord.Member, exp_gain: int, gain_type: ExpGainType = ExpGainType.MESSAGE):
         """Met à jour l'EXP d'un utilisateur et gère les montées de niveau"""
         if not self.db_ready:
             return 0, 0, 0
@@ -156,19 +246,12 @@ class LevelSystem(commands.Cog):
             old_level = user_data['level']
             new_exp = max(0, user_data['exp'] + exp_gain)
             new_level = self.calculate_level(new_exp)
-            
-            # Mettre à jour la base de données
+
+            update_sql = LevelSystem.ExpGainType.get_update_sql(gain_type)
+            update_params = LevelSystem.ExpGainType.get_update_params(gain_type, new_exp, new_level, user.guild.id, user.id)
+
             async with aiosqlite.connect(self.db_path) as db:
-                if from_voice:
-                    await db.execute(
-                        "UPDATE user_levels SET exp = ?, level = ?, voice_time = voice_time + 1, updated_at = CURRENT_TIMESTAMP WHERE guild_id = ? AND user_id = ?",
-                        (new_exp, new_level, user.guild.id, user.id)
-                    )
-                else:
-                    await db.execute(
-                        "UPDATE user_levels SET exp = ?, level = ?, total_messages = total_messages + 1, last_message_time = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE guild_id = ? AND user_id = ?",
-                        (new_exp, new_level, user.guild.id, user.id)
-                    )
+                await db.execute(update_sql, update_params)
                 await db.commit()
 
             # Vérifier les récompenses de niveau (seulement si niveau augmenté)
