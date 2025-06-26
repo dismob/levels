@@ -633,23 +633,23 @@ class LevelSystem(commands.Cog):
         if not self.db_ready:
             return
         
-        log.info("EXP task running...")
+        log.debug("EXP task running...")
         
         blacklisted_channels = self.config.get('blacklisted_channels', [])
         
         for guild in self.bot.guilds:
-            log.info(f"Traitement des channels vocaux pour le serveur {guild.name} ({guild.id})")
+            log.debug(f"Traitement des channels vocaux pour le serveur {guild.name} ({guild.id})")
             # Maybe will have different settings later for each guild
             base_exp: int = self.config.get('exp_per_voice_minute', 0)
             for voice_channel in guild.voice_channels:
-                log.info(f"- Traitement du channel vocal {voice_channel.name} ({voice_channel.id})")
+                log.debug(f"- Traitement du channel vocal {voice_channel.name} ({voice_channel.id})")
                 if voice_channel.id in blacklisted_channels:
-                    log.info(f"  - Channel blacklisté")
+                    log.debug(f"  - Channel blacklisté")
                     continue
 
                 active_members = [m for m in voice_channel.members if not m.bot and not m.voice.self_deaf]
                 if len(active_members) < 2:
-                    log.info(f"  - Pas assez de membres actifs")
+                    log.debug(f"  - Pas assez de membres actifs")
                     continue
 
                 for member in active_members:
@@ -657,7 +657,7 @@ class LevelSystem(commands.Cog):
                     multiplier = self.get_multiplier(member)
                     final_exp = int(base_exp * multiplier)
 
-                    log.info(f"  - Donne {final_exp} EXP à {member.display_name} dans le channel vocal {voice_channel.name}")
+                    log.debug(f"  - Donne {final_exp} EXP à {member.display_name} dans le channel vocal {voice_channel.name}")
                     
                     # Mettre à jour l'EXP
                     await self.update_user_exp(member, final_exp, from_voice=True)
